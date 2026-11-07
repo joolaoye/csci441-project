@@ -1,0 +1,71 @@
+\documentclass[11pt,letterpaper]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{titlesec}
+\usepackage{hyperref}
+\usepackage{fancyhdr}
+
+% Page formatting
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot[R]{\footnotesize\bfseries Page \thepage}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+% Paragraph formatting
+\setlength{\parindent}{1em}
+\setlength{\parskip}{0pt}
+
+% Section formatting
+\titleformat{\section}
+  {\normalfont\normalsize\bfseries}
+  {}{0pt}{\MakeUppercase}
+
+\titlespacing*{\section}
+  {0pt}{16pt}{6pt}
+
+\begin{document}
+
+\noindent\hfill
+{\footnotesize\bfseries CSCI 441 Neural Networks, Project Update 1}
+\par
+
+\vspace{1.5em}
+
+\begin{center}
+    {\Large\bfseries
+    Multi-Class Traffic Sign Classification Using
+    \\Convolutional Neural Networks\par}
+
+    \vspace{0.9em}
+
+    {\small\bfseries
+    Joshua Olaoye, Chidubem Okoye, Mujahid Mohammed,
+    Yohannes Nigusse, Kanchan Thakur\par}
+\end{center}
+
+\vspace{1em}
+
+\section*{Problem Statement}
+Autonomous driving systems rely heavily on accurate computer vision algorithms to interpret traffic control infrastructure in real-time. Environmental factors such as motion blur, variable weather conditions, partial occlusion, and changing illumination can obscure road signs and lead to classification failures. While convolutional neural networks have shown strong performance on traffic sign classification benchmarks, most reported results are obtained under relatively clean, high-resolution imaging conditions, and it remains unclear how specific design choices such as data augmentation and network depth  affect robustness when images are degraded or low-resolution. Therefore, this research aims to design and evaluate a robust CNN architecture that can accurately classify various categories of traffic signs under diverse visual conditions.
+
+\section*{Research Questions}
+
+\begin{itemize}
+
+\item \textbf{RQ1:}	How do data augmentation strategies (such as simulated random rotations, brightness adjustments, and zooming) impact the generalization capability of a CNN on low-resolution traffic signs?
+
+\item \textbf{RQ2:}	RQ2: How does increasing the number of convolutional layers in a CNN affect classification accuracy on low-resolution or degraded traffic sign images compared to clean images?
+
+\end{itemize}
+
+\section*{Dataset}
+This project will use the German Traffic Sign Recognition Benchmark (GTSRB), a publicly available dataset containing over 50,000 images across 43 traffic sign classes. The images vary in resolution, lighting, and viewing conditions, making
+the dataset suitable for evaluating Convolutional Neural Networks (CNNs) on multi-class traffic sign classification. The dataset was selected because its labeled images support experiments investigating how data augmentation and CNN depth affect classification accuracy.
+
+\smallskip
+
+\noindent\textbf{Dataset:}\par
+\noindent\url{https://www.kaggle.com/datasets/tuanai/traffic-signs-dataset}
+
+\end{document}
