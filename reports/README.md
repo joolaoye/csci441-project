@@ -24,16 +24,20 @@ Verify the installation:
 
 ```bash
 pdflatex --version
+bibtex --version
 ```
 
-Compile a report from the repository root:
+Compile the proposal from the repository root. The commands run inside `reports/` so BibTeX finds `references.bib` next to `proposal.tex`:
 
 ```bash
 cd reports
-pdflatex reports/proposal.tex
+pdflatex proposal.tex
+bibtex proposal
+pdflatex proposal.tex
+pdflatex proposal.tex
 ```
 
-The compiled PDF will be available in `build/proposal.pdf`.
+The PDF is written to `reports/proposal.pdf`. Git ignores that PDF, along with the `.aux`, `.bbl`, `.blg`, and `.log` files this sequence creates. The first `pdflatex` run leaves the citations unresolved. `bibtex` reads them, and the last two `pdflatex` runs put the references into the PDF.
 
 You can use VS Code with the LaTeX Workshop extension or any preferred editor to edit and preview the documents.
 
@@ -42,3 +46,4 @@ You can use VS Code with the LaTeX Workshop extension or any preferred editor to
 - Edit the `.tex` source files rather than generated PDFs.
 - LaTeX build artifacts are excluded from Git.
 - Keep changes focused and coordinate edits to shared reports to avoid merge conflicts.
+- Selected comparison tables and figures are copied by hand into `reports/tables/` and `reports/figures/`. Generated output stays under `artifacts/`.

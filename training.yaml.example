@@ -1,0 +1,38 @@
+# Copy this file to training.yaml and edit the copy. Pass that copy to scripts/train.py.
+# This example does not choose a dataset directory. Pass --data-root at training time.
+# experiment is the artifact folder name, for example depth2, depth3, or rotation10.
+# Training the same experiment again replaces artifacts/<experiment>.
+#
+# model.channels is one convolutional layer per entry.
+# [32, 64] is two layers, [32, 64, 128] is three, and [32, 64, 128, 128] is four.
+#
+# A value of 0 disables that augmentation. Allowed ranges:
+#   rotation_degrees: 0 to 20
+#   brightness: 0 to 0.2
+#   zoom: 0 to 0.2
+experiment: example
+seed: 42
+device: auto
+
+data:
+  split_manifest: configs/splits/gtsrb_v1.json
+  image_size: 48
+  num_classes: 43
+
+model:
+  channels: [32, 64]
+  kernel_size: 3
+  dropout: 0.2
+  dense_units: 128
+  min_spatial: 12
+
+training:
+  epochs: 20
+  batch_size: 64
+  learning_rate: 0.001
+  optimizer: adam
+
+augmentation:
+  rotation_degrees: 0
+  brightness: 0
+  zoom: 0

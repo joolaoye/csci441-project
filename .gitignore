@@ -1,4 +1,6 @@
-# LaTeX build output
+# LaTeX build output. This ignores compiled paper PDFs in reports/ itself.
+# Selected copies in reports/tables/ and reports/figures/ can be committed.
+# Generated comparisons stay under artifacts/comparisons/.
 /build/
 reports/*.pdf
 *.aux
@@ -9,3 +11,34 @@ reports/*.pdf
 *.log
 *.out
 *.synctex.gz
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+
+# Downloaded images, training runs, and logs. These stay on each machine.
+/data/
+/artifacts/
+/logs/
+
+# Local copies at the repository root. The examples stay committed.
+# A run still stores its resolved settings as artifacts/<experiment>/config.yaml.
+/evaluation.yaml
+/config.yaml
+/training.yaml
+/shared/*
+!/shared/README.md
+
+# Generated model files
+*.keras
+*.h5
+*.ckpt
+
+# OS and editor files
+.DS_Store

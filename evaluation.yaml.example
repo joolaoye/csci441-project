@@ -1,0 +1,29 @@
+# Copy this file to evaluation.yaml and edit the copy.
+# Evaluation and condition previews use evaluation.yaml when it exists,
+# and this example otherwise.
+#
+# Condition names stay generic. Edit the values rather than adding
+# rotation10 or brightness10.
+#
+# clean applies only the standard preprocessing: RGB, bilinear resize to the
+# model input, and scaling to [0, 1].
+# rotation turns the preprocessed image counterclockwise by degrees. Sampling
+# is bilinear. Empty corners repeat the nearest border pixel.
+# brightness adds delta to normalized intensities and clips the result to [0, 1].
+# lowres bilinearly downsamples the preprocessed image to image_size, with
+# antialiasing, then bilinearly resizes it back to the model input.
+conditions:
+  clean:
+    type: none
+
+  rotation:
+    type: rotation
+    degrees: 10
+
+  brightness:
+    type: brightness
+    delta: 0.1
+
+  lowres:
+    type: downsample
+    image_size: 24
