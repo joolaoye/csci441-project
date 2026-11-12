@@ -5,7 +5,8 @@
 # Training the same experiment again replaces artifacts/<experiment>.
 #
 # model.channels is one convolutional layer per entry.
-# [32, 64] is two layers, [32, 64, 128] is three, and [32, 64, 128, 128] is four.
+# Depth runs keep a fixed width of 64 filters.
+# [64, 64] is two layers, [64, 64, 64] is three, and [64, 64, 64, 64] is four.
 #
 # A value of 0 disables that augmentation. Allowed ranges:
 #   rotation_degrees: 0 to 20
