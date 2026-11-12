@@ -49,26 +49,39 @@
 \section*{Problem Statement}
 Traffic-sign recognition is an important component of autonomous driving and advanced driver-assistance systems (ADAS), enabling vehicles to identify regulatory information such as speed limits and stop signs from camera images \cite{dong2024applications}. 
 Environmental factors such as changing illumination, varying weather conditions, partial occlusion, and viewing angle can affect the visual appearance of traffic signs and make accurate classification challenging \cite{stallkamp2011gtsrb}. 
-Although deep neural networks have achieved high classification accuracy on standard traffic-sign benchmarks \cite{ciresan2012traffic}, these results do not fully explain how design choices, such as data augmentation and network depth, affect performance when image quality or appearance changes. 
-Therefore, this research aims to investigate how different data augmentation techniques and CNN depth affect traffic-sign classification accuracy under varying visual conditions.
+Although deep neural networks have achieved high classification accuracy on standard traffic-sign benchmarks \cite{ciresan2012traffic}, Temel et al. found that challenging visual conditions can significantly reduce traffic-sign recognition performance \cite{temel2017cure}. 
+Hendrycks and Dietterich also found that advances in image-classification architectures do not necessarily improve relative robustness to common corruptions \cite{hendrycks2019robustness}. 
+Building on these findings, this research investigates how data augmentation techniques and CNN depth affect classification accuracy on clean and altered traffic-sign images.
+We will evaluate both effects on clean traffic-sign images and images altered through rotation, zoom, brightness adjustments, and downsampling.
 
 \section*{Research Questions}
 
 \begin{itemize}
-  \item \textbf{RQ1:}	How do different data augmentation techniques affect CNN classification accuracy on traffic-sign images under varying visual conditions?
-  \item \textbf{RQ2:}	How does increasing the number of convolutional layers in a CNN affect classification accuracy on low-resolution or degraded traffic sign images compared to clean images?
+  \item \textbf{RQ1:}	How do different data augmentation strategies affect CNN validation accuracy on clean and altered traffic-sign images?
+  \item \textbf{RQ2:}	How does increasing the number of convolutional layers in a CNN affect validation accuracy on clean and altered traffic-sign images?
 \end{itemize}
 
 \section*{Dataset}
 This project will use the German Traffic Sign Recognition Benchmark (GTSRB), a publicly available dataset containing 51,839 images across 43 traffic-sign classes, with 39,209 training images and 12,630 test images \cite{stallkamp2011gtsrb}. 
 The images vary in resolution, illumination, viewing angle, and partial occlusion, reflecting several visual challenges encountered in real-world traffic-sign recognition \cite{stallkamp2011gtsrb}. 
-We selected this dataset because its labeled images provide a suitable foundation for comparing CNN architectures of varying depth and investigating how different data augmentation techniques affect classification accuracy under varying image conditions.
+We selected this dataset because its labeled images provide a suitable foundation for comparing CNN architectures of varying depth and investigating how different data augmentation techniques affect classification accuracy across these evaluation conditions.
 
 \smallskip
 
-\noindent\textbf{Dataset: }\url{https://www.kaggle.com/datasets/meowmeowmeowmeowmeow/gtsrb-german-traffic-sign}
+\noindent\textbf{Dataset: }\par
+\noindent\url{https://www.kaggle.com/datasets/meowmeowmeowmeowmeow/gtsrb-german-traffic-sign}
 
 \bibliographystyle{IEEEtran}
 \bibliography{references}
+
+\section*{Team Contributions}
+
+\begin{itemize}
+  \item \textbf{Joshua Olaoye:} Literature review, citations, and LaTeX typesetting.
+  \item \textbf{Chidubem Okoye:} Research Question 1.
+  \item \textbf{Mujahid Mohammed:} Project idea and problem statement.
+  \item \textbf{Yohannes Nigusse:} Research Question 2.
+  \item \textbf{Kanchan Thakur:} Dataset selection.
+\end{itemize}
 
 \end{document}
