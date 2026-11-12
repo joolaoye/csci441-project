@@ -154,7 +154,11 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
             "  uv run python scripts/report.py compare \\\n"
             "    --type depth \\\n"
             "    --runs artifacts/<depth2-run> artifacts/<depth3-run> artifacts/<depth4-run> \\\n"
-            "    --conditions clean rotation brightness lowres\n"
+            "    --conditions clean rotation zoom brightness lowres\n\n"
+            "  uv run python scripts/report.py compare \\\n"
+            "    --type augmentation \\\n"
+            "    --runs artifacts/<baseline-run> artifacts/<rotation-run> \\\n"
+            "    --conditions clean rotation zoom brightness lowres\n"
         ),
         formatter_class=HelpFormatter,
     )
@@ -168,7 +172,10 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     compare.add_argument(
         "--conditions",
         nargs="+",
-        help="RQ2 only. Saved evaluation conditions to compare. Omit this for the clean depth table.",
+        help=(
+            "Saved evaluation conditions to compare, such as "
+            "clean rotation zoom brightness lowres. Omit this for the clean summary table."
+        ),
     )
     compare.add_argument(
         "--output",

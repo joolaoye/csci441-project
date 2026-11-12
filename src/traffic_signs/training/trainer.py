@@ -39,8 +39,9 @@ def train(config: dict, *, project_dir: Path | None = None) -> Path:
     The artifact directory is ``artifacts/<experiment>``. Training the same
     experiment again replaces that directory. A failed run still leaves
     ``config.yaml``, ``metadata.json``, the log, and any epoch history written
-    before the failure. ``model.keras`` is the best validation-loss checkpoint
-    and is only present after at least one epoch improved on that metric.
+    before the failure. ``model.keras`` is the checkpoint with the highest
+    clean validation accuracy. It is only present after at least one epoch
+    reported that metric. Altered evaluation conditions are not used here.
     """
     project_dir = Path(project_dir or Path.cwd())
     config = normalize_config(config)
@@ -162,19 +163,7 @@ def train(config: dict, *, project_dir: Path | None = None) -> Path:
         )
         checkpoint_path = run_dir / "model.keras"
         history_writer = HistoryWriter(run_dir / "history.csv")
-        best_epoch = BestEpochTracker(metadata)
-        callbacks = [
-            history_writer,
-            best_epoch,
-            keras.callbacks.ModelCheckpoint(
-                filepath=str(checkpoint_path),
-                monitor="val_loss",
-                save_best_only=True,
-                mode="min",
-                save_weights_only=False,
-                verbose=0,
-            ),
-        ]
+        callbacks = [history_writer, *selection_callbacks(checkpoint_path, metadata)]
         model.fit(
             train_sequence,
             validation_data=validation_sequence,
@@ -185,7 +174,7 @@ def train(config: dict, *, project_dir: Path | None = None) -> Path:
         if not checkpoint_path.is_file():
             raise RuntimeError(
                 "Training finished but no validation checkpoint was saved. "
-                "val_loss was missing or never improved."
+                "val_accuracy was missing or never improved."
             )
         metrics = score_split(
             checkpoint_path,
@@ -208,8 +197,9 @@ def train(config: dict, *, project_dir: Path | None = None) -> Path:
         metadata["validation_macro_f1"] = metrics["macro_f1"]
         status = "completed"
         logger.info(
-            "selected epoch=%s val_loss=%s accuracy=%.4f macro_f1=%.4f",
+            "selected epoch=%s val_accuracy=%s val_loss=%s scored_accuracy=%.4f macro_f1=%.4f",
             metadata["checkpoint_epoch"],
+            metadata["best_val_accuracy"],
             metadata["best_val_loss"],
             metrics["accuracy"],
             metrics["macro_f1"],
@@ -278,34 +268,62 @@ class HistoryWriter(keras.callbacks.Callback):
             self._handle = None
 
 
+def selection_callbacks(checkpoint_path: Path, metadata: dict) -> list:
+    """Select and save the epoch with the highest clean validation accuracy.
+
+    ``BestEpochTracker`` runs first and copies a sparse-accuracy alias into
+    ``val_accuracy`` when Keras logged the metric under the longer name.
+    ``ModelCheckpoint`` then uses that same value. There is no early stopping:
+    training still completes the configured epoch budget. The saved file is
+    the best clean-validation epoch inside that budget, not the final epoch
+    and not a score from an altered evaluation condition.
+    """
+    return [
+        BestEpochTracker(metadata),
+        keras.callbacks.ModelCheckpoint(
+            filepath=str(checkpoint_path),
+            monitor="val_accuracy",
+            save_best_only=True,
+            mode="max",
+            save_weights_only=False,
+            verbose=0,
+        ),
+    ]
+
+
 class BestEpochTracker(keras.callbacks.Callback):
-    """Record the epoch selected by the same rule as ``save_best_only`` on val_loss."""
+    """Record the epoch selected by ``save_best_only`` on clean ``val_accuracy``."""
 
     def __init__(self, metadata: dict):
         super().__init__()
         self.metadata = metadata
-        self.best = float("inf")
+        self.best = float("-inf")
 
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
-        value = logs.get("val_loss")
+        if logs.get("val_accuracy") is None and logs.get("val_sparse_categorical_accuracy") is not None:
+            logs["val_accuracy"] = logs["val_sparse_categorical_accuracy"]
+        value = logs.get("val_accuracy")
+        loss = logs.get("val_loss")
         if value is None:
             return
         value = float(value)
-        improved = value < self.best
+        improved = value > self.best
         logger.info(
             "epoch %d loss=%.4f accuracy=%.4f val_loss=%.4f val_accuracy=%.4f",
             epoch + 1,
             float(logs.get("loss", float("nan"))),
             float(_first(logs, "accuracy", "sparse_categorical_accuracy", default=float("nan"))),
+            float(loss) if loss is not None else float("nan"),
             value,
-            float(_first(logs, "val_accuracy", "val_sparse_categorical_accuracy", default=float("nan"))),
         )
         if improved:
             self.best = value
             self.metadata["checkpoint_epoch"] = epoch + 1
-            self.metadata["best_val_loss"] = value
-            logger.info("saved checkpoint at epoch %d (val_loss=%.4f)", epoch + 1, value)
+            self.metadata["best_val_accuracy"] = value
+            if loss is not None:
+                self.metadata["best_val_loss"] = float(loss)
+            logger.info("saved checkpoint at epoch %d (val_accuracy=%.4f)", epoch + 1, value)
 
 
 def _initial_metadata(config, *, run_id, run_dir, log_path, project_dir, started_at) -> dict:
@@ -337,6 +355,7 @@ def _initial_metadata(config, *, run_id, run_dir, log_path, project_dir, started
         "trainable_parameters": None,
         "total_parameters": None,
         "checkpoint_epoch": None,
+        "best_val_accuracy": None,
         "best_val_loss": None,
         "validation_accuracy": None,
         "validation_macro_f1": None,

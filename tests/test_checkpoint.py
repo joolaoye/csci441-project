@@ -12,6 +12,7 @@ from traffic_signs.data.labels import class_name_for_model
 from traffic_signs.evaluation.evaluate import evaluate_checkpoint
 from traffic_signs.inference.predict import predict_image
 from traffic_signs.models.cnn import build_cnn
+from traffic_signs.training.trainer import selection_callbacks
 from traffic_signs.utils.runs import write_yaml
 
 
@@ -42,6 +43,44 @@ def test_saved_keras_file_reloads_with_the_same_predictions(tmp_path):
     assert prediction["class_name"] == class_name_for_model(prediction["class_id"], 43)
     assert prediction["class_name"] is not None
     assert 0.0 < prediction["confidence"] <= 1.0
+
+
+def test_checkpoint_keeps_the_highest_clean_validation_accuracy(tmp_path):
+    model = build_cnn(
+        image_size=16,
+        num_classes=2,
+        channels=[4, 8],
+        kernel_size=3,
+        dropout=0.0,
+        dense_units=8,
+        min_spatial=8,
+    )
+    checkpoint = tmp_path / "model.keras"
+    metadata: dict = {}
+    callbacks = selection_callbacks(checkpoint, metadata)
+    for callback in callbacks:
+        callback.set_model(model)
+        callback.on_train_begin()
+    weights = [model.get_weights()]
+    logs = [
+        {"val_accuracy": 0.40, "val_loss": 1.20, "accuracy": 0.30, "loss": 1.40},
+        {"val_accuracy": 0.91, "val_loss": 0.80, "accuracy": 0.70, "loss": 0.90},
+        {"val_accuracy": 0.25, "val_loss": 0.05, "accuracy": 0.95, "loss": 0.10},
+    ]
+    for epoch, entry in enumerate(logs):
+        if epoch:
+            model.set_weights([np.full_like(value, epoch) for value in weights[0]])
+        weights.append([np.copy(value) for value in model.get_weights()])
+        for callback in callbacks:
+            callback.on_epoch_end(epoch, dict(entry))
+    assert metadata["checkpoint_epoch"] == 2
+    assert metadata["best_val_accuracy"] == pytest.approx(0.91)
+    assert metadata["best_val_loss"] == pytest.approx(0.80)
+    loaded = keras.models.load_model(checkpoint)
+    saved = loaded.get_weights()
+    for actual, expected in zip(saved, weights[2], strict=True):
+        np.testing.assert_array_equal(actual, expected)
+    assert any(not np.array_equal(actual, rejected) for actual, rejected in zip(saved, weights[3], strict=True))
 
 
 def test_evaluate_rejects_the_training_split():

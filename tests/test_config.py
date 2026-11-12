@@ -127,9 +127,22 @@ def test_example_config_loads_without_a_dataset_directory():
     assert "root" not in example["data"]
     assert example["experiment"] == "example"
     assert example["augmentation"] == {"rotation_degrees": 0.0, "brightness": 0.0, "zoom": 0.0}
-    assert example["model"]["channels"] == [32, 64]
+    assert example["model"]["channels"] == [64, 64]
+    assert example["training"]["epochs"] == 42
     assert example["data"]["num_classes"] == 43
     assert example["data"]["split_manifest"] == "configs/splits/gtsrb_v1.json"
+
+
+def test_shared_baseline_matches_the_example_protocol():
+    baseline = load_config(ROOT / "baseline.yaml")
+    example = load_config(ROOT / "training.yaml.example")
+    assert baseline["experiment"] == "baseline"
+    assert "root" not in baseline["data"]
+    assert baseline["model"] == example["model"]
+    assert baseline["training"] == example["training"]
+    assert baseline["augmentation"] == example["augmentation"]
+    assert baseline["data"] == example["data"]
+    assert baseline["seed"] == example["seed"]
 
 
 def test_experiment_name_can_be_an_artifact_folder_name():

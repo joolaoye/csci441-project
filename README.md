@@ -7,7 +7,7 @@ The experiments address two questions:
 - **RQ1.** How do different data augmentation techniques affect CNN classification accuracy on traffic-sign images under varying visual conditions?
 - **RQ2.** How does increasing the number of convolutional layers in a CNN affect classification accuracy on low-resolution or degraded traffic sign images compared to clean images?
 
-`training.yaml.example` is the starting training configuration. Copy it to `training.yaml` and edit the copy for each experiment. The team chooses the depth, augmentation, and experiment name. `evaluation.yaml.example` is the starting evaluation configuration. Copy it to `evaluation.yaml` and edit the condition values there. There is no separate baseline, augmentation, or depth file in the repository.
+`baseline.yaml` is the shared training configuration, and `evaluation.yaml` is the shared evaluation configuration. Use those files so every run starts from the same baseline and the same conditions. `training.yaml.example` and `evaluation.yaml.example` stay in the repository for anyone who wants to try other settings.
 
 Course reports live in [`reports/`](reports/README.md). This file is the guide for the code.
 
@@ -58,7 +58,7 @@ Sample ids in the manifest are joined to the directory you pass. The example con
 
 ```bash
 uv run python scripts/train.py \
-  --config training.yaml \
+  --config baseline.yaml \
   --data-root /path/to/gtsrb
 ```
 
@@ -68,12 +68,13 @@ uv run python scripts/train.py \
 
 ```bash
 uv run python scripts/train.py \
-  --config training.yaml \
+  --config baseline.yaml \
   --data-root /path/to/gtsrb
 
 uv run python scripts/evaluate.py \
   --checkpoint artifacts/rotation10/model.keras \
   --split validation \
+  --conditions clean rotation zoom brightness lowres \
   --data-root /path/to/gtsrb
 
 uv run python scripts/predict.py \
@@ -83,11 +84,11 @@ uv run python scripts/predict.py \
 
 Each command accepts `--help`.
 
-Training loads the YAML file, checks it, seeds Python, NumPy, and TensorFlow, builds one CNN, and calls Keras `model.fit`. A `ModelCheckpoint` callback keeps the weights with the lowest validation loss and writes them to `model.keras`. The artifact folder is the `experiment` value, such as `artifacts/depth2` or `artifacts/rotation10`. Set that name in the YAML file. Training the same experiment again replaces that folder, including its checkpoint, metrics, and evaluations.
+Training loads the YAML file, checks it, seeds Python, NumPy, and TensorFlow, builds one CNN, and calls Keras `model.fit`. A `ModelCheckpoint` callback keeps the weights with the highest clean validation accuracy and writes them to `model.keras`. Validation images used for that choice are not rotated, zoomed, brightened, or downsampled. The training budget still runs every configured epoch; there is no early stopping. The artifact folder is the `experiment` value, such as `artifacts/depth2` or `artifacts/rotation10`. Set that name in the YAML file. Training the same experiment again replaces that folder, including its checkpoint, metrics, and evaluations.
 
 Evaluation loads that checkpoint and does not train. It writes a new JSON file under `artifacts/<experiment>/evaluations/` and does not change `metrics.json`. `--split validation` is the split to use while comparing augmentation and depth. `--split test` scores the official GTSRB test partition and records a warning. Use it for the final numbers, not for deciding which configuration to keep.
 
-`--condition` selects a deterministic transform from `evaluation.yaml`, or from `evaluation.yaml.example` until that copy exists. It defaults to `clean`, which is the normal preprocessing. `rotation`, `brightness`, and `lowres` change the images after that preprocessing and do not change their size or labels. Rotation is counterclockwise, sampled bilinearly, with nearest-border fill. Brightness adds `delta` to intensities in `[0, 1]` and clips. Low resolution bilinearly shrinks the image, with antialiasing, then bilinearly restores the model input size. The condition name stays generic. Change `degrees`, `delta`, or `image_size` in the YAML file instead of creating a name such as `rotation10`. A later evaluation at a different value writes a separate file.
+`--conditions` scores every listed condition in that one command and loads the checkpoint once. `--condition` scores a single condition and defaults to `clean` when neither flag is passed. Both read `evaluation.yaml`, or `evaluation.yaml.example` until that copy exists. `clean` is the normal preprocessing. `rotation`, `zoom`, `brightness`, and `lowres` change the images after that preprocessing and do not change their size or labels. Rotation is counterclockwise, sampled bilinearly, with nearest-border fill. Zoom is a center zoom-in: `factor: 0.1` uses scale 1.1, keeps the center, and bilinearly restores the model input. That is separate from training zoom, which randomly draws a scale from `[1 - zoom, 1 + zoom]`. Brightness adds `delta` to intensities in `[0, 1]` and clips. Low resolution bilinearly shrinks the image, with antialiasing, then bilinearly restores the model input size. The condition name stays generic. Change `degrees`, `factor`, `delta`, or `image_size` in the YAML file instead of creating a name such as `rotation10`. A later evaluation at a different value writes a separate file. The same saved checkpoint is scored for every condition.
 
 ```bash
 uv run python scripts/evaluate.py \
@@ -128,7 +129,13 @@ uv run python scripts/report.py compare \
 uv run python scripts/report.py compare \
   --type depth \
   --runs artifacts/<depth2-run> artifacts/<depth3-run> artifacts/<depth4-run> \
-  --conditions clean rotation brightness lowres
+  --conditions clean rotation zoom brightness lowres
+
+uv run python scripts/report.py compare \
+  --type augmentation \
+  --runs artifacts/<baseline-run> artifacts/<rotation-run> artifacts/<zoom-run> \
+    artifacts/<brightness-run> artifacts/<combined-run> \
+  --conditions clean rotation zoom brightness lowres
 ```
 
 `run` writes figures under `artifacts/<experiment>/figures/`: training and validation accuracy, training and validation loss, a count-annotated confusion matrix and a separate row-normalized matrix, and a per-class F1 chart. Nonzero count cells are labeled and zero cells are left blank. The matrix size comes from the saved evaluation. The selected checkpoint epoch is marked on the training curves. `per_class.csv` copies the stored per-class precision, recall, F1, and support. Pass `--split test` only after `scripts/evaluate.py` has written that split. An augmentation example is written only when that run's saved settings enable at least one transform, using `--data-root` and a fixed preview seed. The figure shows the original image and one panel for each nonzero factor. A rotation-only run does not include brightness or zoom. A run with every factor at 0 skips the figure.
@@ -139,9 +146,9 @@ uv run python scripts/report.py compare \
 
 `compare --type augmentation` is RQ1. Augmentation settings may differ. Architecture, split manifest, and training protocol must match, and one run must be the unaugmented baseline. `compare --type depth` is RQ2. Convolutional depth may differ. Augmentation, split manifest, and training protocol must match. Both commands use validation metrics from the selected checkpoint. A configuration with two or more distinct seeds shows the mean and sample standard deviation. A single seed does not get a standard deviation. Each comparison writes `comparison.csv`, `comparison.tex`, and `comparison.png` under `artifacts/comparisons/<type>/<comparison-id>/`. The CSV keeps one row per run. The LaTeX file is a `table` environment for `\input{}` and needs `\usepackage{booktabs}`.
 
-`--conditions` is only for the depth comparison. It reads evaluation files that `scripts/evaluate.py` already wrote. It does not train or evaluate. Every run needs one validation result for every requested condition, with the same split, image ids, and parameters. If one condition name has two different parameter sets, the comparison stops instead of choosing one. The table shows validation accuracy. The CSV also keeps macro-F1, loss, and the accuracy drop from the clean condition when that condition is included. Omit `--conditions` for the original depth table. Training augmentation and these evaluation transforms stay separate, so a depth comparison does not need a combined-augmentation model for each depth.
+`--conditions` reads evaluation files that `scripts/evaluate.py` already wrote. It does not train or evaluate. It works for both `--type depth` and `--type augmentation`. Every run needs one validation result for every requested condition, with the same split, image ids, and parameters. If one condition name has two different parameter sets, the comparison stops instead of choosing one. The LaTeX table shows validation accuracy and is a \texttt{tabular*} of width \texttt{\textbackslash textwidth}, so it spans the page inside the margins. For depth it shows the number of convolutional layers. For augmentation it shows the training strategy. Trainable parameter counts stay in the CSV. The CSV keeps macro-F1, validation loss, the selected checkpoint epoch, the configuration, and the accuracy drop from the clean condition when that condition is included. Omit `--conditions` for the clean summary table. Training augmentation and these evaluation transforms stay separate.
 
-The RQ1 paper table lists the augmentation setting, validation accuracy, macro-F1, and best validation loss. The selected checkpoint epoch stays in the CSV.
+The clean RQ1 summary lists the augmentation setting, validation accuracy, macro-F1, and the validation loss at the selected checkpoint. The selected checkpoint epoch stays in the CSV and in the clean depth table.
 
 Those generated files stay under `artifacts/` and are not copied into `reports/`. After review, copy the table and figure you want to keep:
 
@@ -165,14 +172,14 @@ data:
   num_classes: 43
 
 model:
-  channels: [32, 64]
+  channels: [64, 64]
   kernel_size: 3
   dropout: 0.2
   dense_units: 128
   min_spatial: 12
 
 training:
-  epochs: 20
+  epochs: 42
   batch_size: 64
   learning_rate: 0.001
   optimizer: adam
@@ -183,7 +190,7 @@ augmentation:
   zoom: 0
 ```
 
-`model.channels` is one convolutional block per entry. `[32, 64]` is two layers, `[32, 64, 128]` is three, and `[32, 64, 128, 128]` is four. There is one model definition. For a three-layer run, copy `training.yaml.example` to `training.yaml`, set `experiment` to `depth3`, and set `model.channels` to `[32, 64, 128]`. For a rotation run, set `experiment` to `rotation10` and change `augmentation.rotation_degrees`. Keep the split manifest, image size, optimizer, learning rate, batch size, and epoch count the same across runs you plan to compare.
+`model.channels` is one convolutional block per entry. `[64, 64]` is the shared two-layer baseline. `[64, 64, 128]` is three layers, and `[64, 64, 128, 128]` is four. There is one model definition. For a three-layer run, copy `baseline.yaml`, set `experiment` to `depth3`, and set `model.channels` to `[64, 64, 128]`. For a rotation run, set `experiment` to `rotation10` and change `augmentation.rotation_degrees`. Keep the split manifest, image size, optimizer, learning rate, batch size, and epoch count the same across runs you plan to compare.
 
 Each block is a same-padded convolution, batch normalization, and ReLU. The convolution has no bias because batch normalization supplies the shift. Pooling is not tied to depth. On a 48×48 input with `min_spatial: 12`, every depth uses two 2×2 pooling stages and ends at a 12×12 map. The pools are spaced through the network. Global average pooling, dropout, a 128-unit ReLU layer, dropout, and a 43-way softmax follow. The saved run metadata includes the pooling schedule and the final map size.
 
@@ -215,7 +222,7 @@ A training run:
 artifacts/<experiment>/
 ├── config.yaml      # resolved configuration used for this run
 ├── metadata.json    # experiment name, seeds, versions, device, git commit, manifest hash, status
-├── model.keras      # best validation-loss checkpoint
+├── model.keras      # highest clean-validation-accuracy checkpoint
 ├── metrics.json     # that checkpoint's validation accuracy and macro-F1
 ├── history.csv      # one row per completed epoch
 └── evaluations/     # later evaluation files; metrics.json is not rewritten
@@ -223,11 +230,11 @@ artifacts/<experiment>/
 
 `metadata.json` is written at the start with status `running` and updated at the end. If training fails, status is `failed`, the error is stored, and the log contains the traceback. Epochs completed before the failure remain in `history.csv`. The manifest hash is SHA-256 of the manifest file bytes. Macro-F1 is the unweighted mean of the per-class F1 scores over all classes the model can predict, including a class with no images.
 
-Downloaded images, training runs, and logs stay on each machine and are not committed. `training.yaml.example`, `evaluation.yaml.example`, and the split manifest are meant to be committed. Copies you edit at the repository root, `training.yaml`, `config.yaml`, and `evaluation.yaml`, stay on your machine. The `config.yaml` inside a run directory is that run's resolved settings and stays with the run.
+Downloaded images, training runs, and logs stay on each machine and are not committed. `baseline.yaml`, `evaluation.yaml`, both example files, and the split manifest are meant to be committed. The `config.yaml` inside a run directory is that run's resolved settings and stays with the run.
 
 ## Sharing a run
 
-`shared/` is the drop folder for a finished experiment. It is not committed. Copy `artifacts/<experiment>/` into `shared/<experiment>/` and send that folder. The other person drops it into their own `shared/` and points the same commands at it. See [shared/README.md](shared/README.md) for the files to include. They still pass their own `--data-root`.
+`shared/` is the drop folder for a finished experiment. Copy `artifacts/<experiment>/` into `shared/<experiment>/` and commit that folder. A teammate points the same commands at `shared/<experiment>/`. See [shared/README.md](shared/README.md) for the files to include. They still pass their own `--data-root`.
 
 Selected comparison files can later be copied into `reports/tables/` and `reports/figures/`. Nothing here publishes or syncs them.
 

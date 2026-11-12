@@ -40,7 +40,25 @@ def test_prepare_train_and_evaluate_require_a_dataset_path():
         ["--checkpoint", "model.keras", "--split", "validation", "--data-root", "/path/to/gtsrb"]
     )
     assert evaluated.data_root == "/path/to/gtsrb"
-    assert evaluated.condition == "clean"
+    assert evaluated.condition is None
+    assert evaluated.conditions is None
+    several = evaluate.parse_args(
+        [
+            "--checkpoint",
+            "model.keras",
+            "--split",
+            "validation",
+            "--data-root",
+            "/path/to/gtsrb",
+            "--conditions",
+            "clean",
+            "rotation",
+            "zoom",
+            "brightness",
+            "lowres",
+        ]
+    )
+    assert several.conditions == ["clean", "rotation", "zoom", "brightness", "lowres"]
 
     report = _script("report")
     reported = report.parse_args(["run", "--run", "artifacts/example"])

@@ -224,7 +224,8 @@ def test_compare_averages_distinct_seeds_and_leaves_single_runs_without_std(tmp_
     assert r"\caption{" in text
     assert r"\label{tab:augmentation-comparison-" in text
     assert r"\pm" in text
-    assert "booktabs" in text
+    assert r"\toprule" in text
+    assert not text.lstrip().startswith("%")
     assert "Augmentation configuration" in text
     assert "Selected checkpoint epoch" not in text
     assert result["png"].read_bytes().startswith(b"\x89PNG")

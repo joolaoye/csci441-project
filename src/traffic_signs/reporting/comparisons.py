@@ -69,20 +69,16 @@ def compare_runs(
 ) -> dict:
     """Write the CSV, LaTeX table, and comparison figure for one research question.
 
-    ``conditions`` adds an RQ2 robustness table. The evaluation files must
-    already exist. This command does not train or evaluate a model.
+    ``conditions`` adds a robustness table for either research question. The
+    evaluation files must already exist. This command does not train or
+    evaluate a model. Checkpoint selection stays on clean validation accuracy.
     """
     if comparison_type not in COMPARISON_TYPES:
         raise ReportError("comparison type must be 'augmentation' or 'depth'.")
-    if conditions and comparison_type != "depth":
-        raise ReportError(
-            "Evaluation conditions belong to the depth comparison. "
-            "RQ1 compares training augmentation, not evaluation degradation."
-        )
     summaries = [load_run_summary(Path(run_dir)) for run_dir in run_dirs]
     check_compatible(summaries, comparison_type)
     if conditions:
-        return _compare_depth_conditions(summaries, conditions, output_root)
+        return _compare_conditions(summaries, conditions, output_root, comparison_type)
     rows, warnings = comparison_rows(summaries, comparison_type)
     comparison_id = _comparison_id(summaries)
     output_dir = Path(output_root) / comparison_type / comparison_id
@@ -266,8 +262,13 @@ def comparison_rows(summaries: list[dict], comparison_type: str) -> tuple[list[d
     return rows, warnings
 
 
-def _compare_depth_conditions(summaries: list[dict], conditions: list[str], output_root: Path) -> dict:
-    """Compare saved evaluation conditions across CNN depths."""
+def _compare_conditions(
+    summaries: list[dict],
+    conditions: list[str],
+    output_root: Path,
+    comparison_type: str,
+) -> dict:
+    """Compare saved evaluation conditions for depth or training augmentation."""
     requested = list(dict.fromkeys(conditions))
     if not requested:
         raise ReportError("Pass at least one evaluation condition.")
@@ -283,6 +284,7 @@ def _compare_depth_conditions(summaries: list[dict], conditions: list[str], outp
             records.append(
                 {
                     **summary,
+                    "configuration": _condition_configuration(summary, comparison_type),
                     "condition": name,
                     "condition_label": evaluation["condition"]["label"],
                     "condition_type": evaluation["condition"]["type"],
@@ -297,15 +299,17 @@ def _compare_depth_conditions(summaries: list[dict], conditions: list[str], outp
                     "accuracy_drop_from_clean": drop,
                 }
             )
-    grouped, warnings = _condition_rows(records, requested)
+    grouped, warnings = _condition_rows(records, requested, comparison_type)
     identity = _comparison_id(summaries) + "_" + _condition_digest(selected, requested)
-    output_dir = Path(output_root) / "depth" / identity
+    output_dir = Path(output_root) / comparison_type / identity
     output_dir.mkdir(parents=True, exist_ok=True)
     csv_path = output_dir / "comparison.csv"
     latex_path = output_dir / "comparison.tex"
-    _write_condition_csv(csv_path, records)
-    _write_condition_latex(latex_path, grouped, requested, identity)
-    figure_paths = plot_condition_comparison(grouped, requested, output_dir / "comparison")
+    _write_condition_csv(csv_path, records, comparison_type)
+    _write_condition_latex(latex_path, grouped, requested, identity, comparison_type)
+    figure_paths = plot_condition_comparison(
+        grouped, requested, output_dir / "comparison", comparison_type
+    )
     return {
         "csv": csv_path,
         "latex": latex_path,
@@ -385,34 +389,38 @@ def _parameter_text(parameters: dict) -> str:
     return ", ".join(f"{key}={parameters[key]}" for key in sorted(parameters))
 
 
-def _condition_rows(records: list[dict], conditions: list[str]) -> tuple[list[dict], list[str]]:
+def _condition_rows(
+    records: list[dict],
+    conditions: list[str],
+    comparison_type: str,
+) -> tuple[list[dict], list[str]]:
     groups: dict[tuple, list[str]] = {}
     for record in records:
-        key = (record["depth"], _channel_key(record["channels"]))
+        key = _condition_group_key(record, comparison_type)
         groups.setdefault(key, [])
         if record["run_id"] not in groups[key]:
             groups[key].append(record["run_id"])
     rows = []
     warnings = []
-    for (depth, channels), run_ids in groups.items():
-        members = [
-            record
-            for record in records
-            if record["depth"] == depth and _channel_key(record["channels"]) == channels
-        ]
+    for key, run_ids in groups.items():
+        members = [record for record in records if _condition_group_key(record, comparison_type) == key]
         seeds = [next(record["seed"] for record in members if record["run_id"] == run_id) for run_id in run_ids]
         varied = len(seeds) == len(set(seeds)) and len(run_ids) >= 2
         if len(seeds) != len(set(seeds)):
+            name = _condition_configuration(members[0], comparison_type)
             warnings.append(
-                f"Depth {depth} repeats seed(s) {sorted(set(seeds))}. "
+                f"{name} repeats seed(s) {sorted(set(seeds))}. "
                 "Standard deviation is omitted for repeated seeds."
             )
         first = next(record for record in members if record["run_id"] == run_ids[0])
-        channel_text = ", ".join(str(channel) for channel in channels)
+        channel_text = ", ".join(str(channel) for channel in _channel_key(first["channels"]))
         row = {
-            "depth": depth,
+            "depth": first["depth"],
             "channels": channel_text,
-            "label": f"{depth} layers ({channel_text})",
+            "rotation_degrees": first["rotation_degrees"],
+            "brightness": first["brightness"],
+            "zoom": first["zoom"],
+            "label": _condition_configuration(first, comparison_type),
             "trainable_parameters": first["trainable_parameters"],
             "checkpoint_epoch": first["checkpoint_epoch"],
             "accuracies": {},
@@ -425,8 +433,28 @@ def _condition_rows(records: list[dict], conditions: list[str]) -> tuple[list[di
             row["accuracy_stds"][name] = _sample_std(values) if varied else None
             row["labels"][name] = next(record["condition_label"] for record in members if record["condition"] == name)
         rows.append(row)
-    rows.sort(key=lambda row: (row["depth"], row["channels"]))
+    if comparison_type == "depth":
+        counts: dict[int, int] = {}
+        for row in rows:
+            counts[row["depth"]] = counts.get(row["depth"], 0) + 1
+        for row in rows:
+            row["label"] = str(row["depth"]) if counts[row["depth"]] == 1 else f"{row['depth']} ({row['channels']})"
+        rows.sort(key=lambda row: (row["depth"], row["channels"]))
+    else:
+        rows.sort(key=_strategy_sort)
     return rows, warnings
+
+
+def _condition_group_key(record: dict, comparison_type: str) -> tuple:
+    if comparison_type == "augmentation":
+        return (record["rotation_degrees"], record["brightness"], record["zoom"])
+    return (record["depth"], _channel_key(record["channels"]))
+
+
+def _condition_configuration(record: dict, comparison_type: str) -> str:
+    if comparison_type == "augmentation":
+        return _strategy_label(record)
+    return str(record["depth"])
 
 
 def _channel_key(channels) -> tuple:
@@ -435,14 +463,16 @@ def _channel_key(channels) -> tuple:
     return tuple(channels)
 
 
-def _write_condition_csv(path: Path, records: list[dict]) -> None:
+def _write_condition_csv(path: Path, records: list[dict], comparison_type: str) -> None:
     fields = [
         "run_id",
         "seed",
+        "configuration",
         "depth",
         "channels",
         "trainable_parameters",
         "checkpoint_epoch",
+        "best_val_loss",
         "epochs",
         "batch_size",
         "learning_rate",
@@ -464,7 +494,14 @@ def _write_condition_csv(path: Path, records: list[dict]) -> None:
         "condition_loss",
         "accuracy_drop_from_clean",
     ]
-    ordered = sorted(records, key=lambda record: (record["depth"], record["condition"], record["run_id"]))
+    ordered = sorted(
+        records,
+        key=lambda record: (
+            _strategy_sort(record) if comparison_type == "augmentation" else (record["depth"], str(record["channels"])),
+            record["condition"],
+            record["run_id"],
+        ),
+    )
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
@@ -476,50 +513,66 @@ def _write_condition_csv(path: Path, records: list[dict]) -> None:
             writer.writerow({field: _csv_value(row.get(field)) for field in fields})
 
 
-def _write_condition_latex(path: Path, rows: list[dict], conditions: list[str], comparison_id: str) -> None:
-    label = f"tab:depth-conditions-{comparison_id.replace('_', '-')}"
-    notes = []
-    if rows:
-        for name in conditions:
-            notes.append(rows[0]["labels"][name])
-    caption = (
-        "Validation accuracy at the selected checkpoint for convolutional networks "
-        "under clean and transformed inputs. "
-        + ". ".join(notes)
-        + "."
-    )
-    header = "CNN depth & Trainable parameters & " + " & ".join(
-        _latex_text(_short_condition_header(name)) for name in conditions
-    )
-    alignment = "ll" + "r" * len(conditions)
+def _write_condition_latex(
+    path: Path,
+    rows: list[dict],
+    conditions: list[str],
+    comparison_id: str,
+    comparison_type: str,
+) -> None:
+    label = f"tab:{comparison_type}-conditions-{comparison_id.replace('_', '-')}"
+    notes = [rows[0]["labels"][name] for name in conditions] if rows else []
+    detail = ". ".join(notes)
+    if comparison_type == "augmentation":
+        caption = (
+            "Validation accuracy at the selected checkpoint for each training "
+            "augmentation on clean and transformed inputs. "
+            + detail
+            + "."
+        )
+        header = "Training augmentation & " + " & ".join(
+            _latex_text(_short_condition_header(name)) for name in conditions
+        )
+        alignment = "l" + "r" * len(conditions)
+    else:
+        caption = (
+            "Validation accuracy at the selected checkpoint for convolutional "
+            "networks of different depth. "
+            + detail
+            + "."
+        )
+        header = "CNN depth & " + " & ".join(
+            _latex_text(_short_condition_header(name)) for name in conditions
+        )
+        alignment = "l" + "r" * len(conditions)
     lines = [
-        "% Requires \\usepackage{booktabs} in the report preamble.",
-        "% Accuracies come from saved evaluation files, not a new model run.",
-        "% The CSV includes macro-F1, loss, and the accuracy drop from clean.",
         "\\begin{table}[ht]",
         "\\centering",
         f"\\caption{{{_latex_text(caption)}}}",
         f"\\label{{{label}}}",
+        "\\vspace{0.6em}",
         "\\small",
-        f"\\begin{{tabular}}{{{alignment}}}",
+        "\\begin{tabular*}{\\textwidth}{@{\\extracolsep{\\fill}}" + alignment + "@{}}",
         "\\toprule",
         header + " \\\\",
         "\\midrule",
     ]
     for row in rows:
-        cells = [
-            _latex(row["label"]),
-            _latex(_format_parameters(row["trainable_parameters"])),
-        ]
+        cells = [_latex(row["label"])]
         for name in conditions:
             cells.append(_latex_metric(row["accuracies"][name], row["accuracy_stds"][name]))
         lines.append(" & ".join(cells) + " \\\\")
-    lines.extend(["\\bottomrule", "\\end{tabular}", "\\end{table}", ""])
+    lines.extend(["\\bottomrule", "\\end{tabular*}", "\\end{table}", ""])
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def plot_condition_comparison(rows: list[dict], conditions: list[str], path: Path) -> list[Path]:
-    """Grouped bars of validation accuracy for each depth and condition."""
+def plot_condition_comparison(
+    rows: list[dict],
+    conditions: list[str],
+    path: Path,
+    comparison_type: str = "depth",
+) -> list[Path]:
+    """Grouped bars of validation accuracy for each configuration and condition."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -527,9 +580,11 @@ def plot_condition_comparison(rows: list[dict], conditions: list[str], path: Pat
 
     labels = [row["label"] for row in rows]
     positions = np.arange(len(rows))
-    width = min(0.8 / max(len(conditions), 1), 0.22)
+    width = min(0.8 / max(len(conditions), 1), 0.18)
     colors = ("#1f4e79", "#c47b2b", "#2f6f4e", "#7a4e8a", "#8c3a3a", "#3d6d8c")
-    figure, axis = plt.subplots(figsize=(max(7.0, 1.6 * len(rows) + 2.0), 4.6))
+    figure, axis = plt.subplots(
+        figsize=(max(7.2, 1.35 * len(rows) + 0.45 * len(conditions)), 4.8)
+    )
     for index, name in enumerate(conditions):
         offset = (index - (len(conditions) - 1) / 2) * width
         values = [row["accuracies"][name] for row in rows]
@@ -543,11 +598,20 @@ def plot_condition_comparison(rows: list[dict], conditions: list[str], path: Pat
             color=colors[index % len(colors)],
             label=rows[0]["labels"][name] if rows else name,
         )
-    axis.set_xticks(positions, labels, rotation=15 if len(rows) > 3 else 0, ha="right" if len(rows) > 3 else "center")
+    axis.set_xticks(
+        positions,
+        labels,
+        rotation=15 if len(rows) > 3 else 0,
+        ha="right" if len(rows) > 3 else "center",
+    )
     axis.set_ylim(0, 1)
     axis.set_ylabel("Validation accuracy")
-    axis.set_xlabel("CNN depth")
-    axis.set_title("RQ2 depth comparison\nClean and transformed validation accuracy")
+    if comparison_type == "augmentation":
+        axis.set_xlabel("Training augmentation")
+        axis.set_title("RQ1 augmentation comparison\nClean and transformed validation accuracy")
+    else:
+        axis.set_xlabel("CNN depth")
+        axis.set_title("RQ2 depth comparison\nClean and transformed validation accuracy")
     axis.legend(frameon=False, fontsize=8)
     figure.tight_layout()
     return save_figure(figure, path)
@@ -650,29 +714,30 @@ def _write_latex(path: Path, rows: list[dict], comparison_type: str, comparison_
     label = f"tab:{comparison_type}-comparison-{comparison_id.replace('_', '-')}"
     if comparison_type == "augmentation":
         caption = (
-            "Validation metrics at the selected checkpoint for the baseline "
-            "and augmentation configurations."
+            "Clean validation metrics at the checkpoint with the highest "
+            "clean validation accuracy, for the baseline and augmentation configurations."
         )
         header = (
             "Augmentation configuration & Validation accuracy & Macro-F1 "
-            "& Best validation loss"
+            "& Validation loss"
         )
         alignment = "lrrr"
     else:
-        caption = "Validation metrics at the selected checkpoint for convolutional networks of different depth."
+        caption = (
+            "Clean validation metrics at the checkpoint with the highest "
+            "clean validation accuracy, for convolutional networks of different depth."
+        )
         header = (
             "CNN depth & Trainable parameters & Validation accuracy "
             "& Macro-F1 & Selected checkpoint epoch"
         )
         alignment = "lrrrr"
     lines = [
-        "% Requires \\usepackage{booktabs} in the report preamble.",
-        "% Validation accuracy and macro-F1 are from the selected checkpoint.",
-        "% A standard deviation is included only when a configuration has two or more distinct seeds.",
         "\\begin{table}[ht]",
         "\\centering",
         f"\\caption{{{caption}}}",
         f"\\label{{{label}}}",
+        "\\vspace{0.6em}",
         "\\small",
         f"\\begin{{tabular}}{{{alignment}}}",
         "\\toprule",
@@ -733,6 +798,44 @@ def _hashable(value):
     return value
 
 
+def _strategy_label(row: dict) -> str:
+    """Publication name for a training-augmentation setting."""
+    rotation = float(row["rotation_degrees"]) != 0
+    zoom = float(row["zoom"]) != 0
+    brightness = float(row["brightness"]) != 0
+    if not rotation and not zoom and not brightness:
+        return "None (baseline)"
+    names = {
+        (True, False, False): "Rotation only",
+        (False, True, False): "Zoom only",
+        (False, False, True): "Brightness only",
+        (True, True, True): "Rotation + Zoom + Brightness",
+    }
+    return names.get((rotation, zoom, brightness), " + ".join(
+        part
+        for part, enabled in (
+            ("Rotation", rotation),
+            ("Zoom", zoom),
+            ("Brightness", brightness),
+        )
+        if enabled
+    ))
+
+
+def _strategy_sort(row: dict) -> tuple:
+    rotation = float(row["rotation_degrees"]) != 0
+    zoom = float(row["zoom"]) != 0
+    brightness = float(row["brightness"]) != 0
+    order = {
+        (False, False, False): 0,
+        (True, False, False): 1,
+        (False, True, False): 2,
+        (False, False, True): 3,
+        (True, True, True): 4,
+    }
+    return (order.get((rotation, zoom, brightness), 5), _strategy_label(row))
+
+
 def _augmentation_text(row: dict) -> str:
     if row["rotation_degrees"] == 0 and row["brightness"] == 0 and row["zoom"] == 0:
         return "none"
@@ -764,8 +867,9 @@ def _short_condition_header(name: str) -> str:
     labels = {
         "clean": "Clean",
         "rotation": "Rotation",
+        "zoom": "Zoom",
         "brightness": "Brightness",
-        "lowres": "Low resolution",
+        "lowres": "Low-res",
     }
     return labels.get(name, name.replace("-", " ").capitalize())
 

@@ -19,7 +19,12 @@ from traffic_signs.evaluation.conditions import (
     load_conditions,
     normalize_condition,
 )
-from traffic_signs.evaluation.evaluate import evaluate_checkpoint, score_split
+from traffic_signs.evaluation.evaluate import (
+    evaluate_checkpoint,
+    evaluate_conditions,
+    requested_condition_names,
+    score_split,
+)
 from traffic_signs.models.cnn import build_cnn
 from traffic_signs.reporting.comparisons import compare_runs
 from traffic_signs.reporting.previews import generate_condition_previews, preview_panels, select_preview_samples
@@ -31,13 +36,40 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_shipped_evaluation_conditions_keep_generic_names():
     conditions = load_conditions(ROOT / "evaluation.yaml.example")
-    assert set(conditions) == {"clean", "rotation", "brightness", "lowres"}
+    assert load_conditions(ROOT / "evaluation.yaml") == conditions
+    assert set(conditions) == {"clean", "rotation", "zoom", "brightness", "lowres"}
     assert conditions["clean"]["type"] == "none"
     assert conditions["rotation"]["parameters"] == {"degrees": 10.0}
+    assert conditions["zoom"]["parameters"] == {"factor": 0.1}
+    assert conditions["zoom"]["type"] == "zoom"
     assert conditions["brightness"]["parameters"] == {"delta": 0.1}
     assert conditions["lowres"]["parameters"] == {"image_size": 24}
     with pytest.raises(ConditionError, match="without digits"):
         normalize_condition("rotation10", {"type": "rotation", "degrees": 10})
+
+
+def test_zoom_is_a_deterministic_center_zoom_in():
+    image = np.zeros((16, 16, 3), dtype=np.float32)
+    image[4:12, 4:12] = 1.0
+    identity = normalize_condition("zoom", {"type": "zoom", "factor": 0})
+    np.testing.assert_array_equal(apply_condition(image, identity, 16), image)
+    doubled = normalize_condition("zoom", {"type": "zoom", "factor": 1})
+    once = apply_condition(image, doubled, 16)
+    twice = apply_condition(image, doubled, 16)
+    np.testing.assert_array_equal(once, twice)
+    assert once.shape == (16, 16, 3)
+    assert once.min() >= 0 and once.max() <= 1
+    assert once[8, 8, 0] == pytest.approx(1.0)
+    assert once.mean() > 0.9
+    assert once.mean() > image.mean()
+    mild = normalize_condition("zoom", {"type": "zoom", "factor": 0.1})
+    changed = apply_condition(image, mild, 16)
+    assert changed.shape == image.shape
+    assert not np.array_equal(changed, image)
+    assert changed[8, 8, 0] > 0.9
+    assert changed.mean() > image.mean()
+    with pytest.raises(ConditionError, match="factor"):
+        normalize_condition("zoom", {"type": "zoom", "factor": -0.1})
 
 
 def test_conditions_are_deterministic_and_keep_shape_range_and_labels(tmp_path):
@@ -46,6 +78,7 @@ def test_conditions_are_deterministic_and_keep_shape_range_and_labels(tmp_path):
     rotation = normalize_condition("rotation", {"type": "rotation", "degrees": 10})
     brighter = normalize_condition("brightness", {"type": "brightness", "delta": 0.1})
     lowres = normalize_condition("lowres", {"type": "downsample", "image_size": 8})
+    zoom = normalize_condition("zoom", {"type": "zoom", "factor": 0.1})
     original = preprocess_array(image, 16)
     assert np.array_equal(apply_condition(original, clean, 16), original)
     rotated_a = apply_condition(original, rotation, 16)
@@ -60,6 +93,11 @@ def test_conditions_are_deterministic_and_keep_shape_range_and_labels(tmp_path):
     restored = apply_condition(original, lowres, 16)
     assert restored.shape == (16, 16, 3)
     assert not np.allclose(restored, original)
+    zoomed_a = apply_condition(original, zoom, 16)
+    zoomed_b = apply_condition(original, zoom, 16)
+    np.testing.assert_array_equal(zoomed_a, zoomed_b)
+    assert zoomed_a.shape == original.shape
+    assert not np.array_equal(zoomed_a, original)
     turned = _half_turn(original)
     np.testing.assert_allclose(turned, np.rot90(original, 2), atol=0.08)
 
@@ -148,6 +186,27 @@ def test_clean_evaluation_matches_an_unconditioned_score_and_keeps_both_paramete
     assert first["metrics"]["condition"]["parameters"]["degrees"] == 10
     assert second["metrics"]["condition"]["parameters"]["degrees"] == 15
     assert first["metrics"]["condition"]["fingerprint"] != second["metrics"]["condition"]["fingerprint"]
+    zoom = normalize_condition("zoom", {"type": "zoom", "factor": 0.1})
+    first_zoom = score_split(
+        run_dir / "model.keras",
+        samples,
+        data_root=images,
+        image_size=16,
+        num_classes=2,
+        batch_size=2,
+        condition=zoom,
+    )
+    second_zoom = score_split(
+        run_dir / "model.keras",
+        samples,
+        data_root=images,
+        image_size=16,
+        num_classes=2,
+        batch_size=2,
+        condition=zoom,
+    )
+    assert first_zoom["accuracy"] == second_zoom["accuracy"]
+    np.testing.assert_array_equal(first_zoom["probabilities"], second_zoom["probabilities"])
 
 
 def test_preview_uses_the_evaluation_transform_and_reuses_a_matching_fingerprint(tmp_path):
@@ -224,9 +283,13 @@ def test_condition_comparison_reports_accuracy_drop_and_rejects_ambiguous_runs(t
     result = compare_runs([shallow, deep], "depth", tmp_path / "out", conditions=["clean", "rotation"])
     text = result["latex"].read_text(encoding="utf-8")
     assert r"\begin{table}" in text
-    assert "booktabs" in text
+    assert not text.lstrip().startswith("%")
+    assert "CNN depth" in text
+    assert "Parameters" not in text
+    assert r"\textwidth" in text
     assert "Rotation: +10" in text
     assert result["png"].read_bytes().startswith(b"\x89PNG")
+    assert result["output_dir"].parent.name == "depth"
     rows = list(csv.DictReader(result["csv"].open(encoding="utf-8")))
     drop = next(row for row in rows if row["run_id"] == "depth2" and row["condition"] == "rotation")
     assert drop["condition_accuracy"] == "0.550000"
@@ -234,7 +297,7 @@ def test_condition_comparison_reports_accuracy_drop_and_rejects_ambiguous_runs(t
     assert drop["evaluation_id"]
     plain = compare_runs([shallow, deep], "depth", tmp_path / "plain")
     assert "Macro-F1" in plain["latex"].read_text(encoding="utf-8")
-    with pytest.raises(ReportError, match="RQ1"):
+    with pytest.raises(ReportError, match="architecture"):
         compare_runs([shallow, deep], "augmentation", tmp_path / "rq1", conditions=["clean"])
     _evaluation(shallow, "rotation", {"degrees": 15}, 0.40, "same-images", tag="other")
     with pytest.raises(ReportError, match="different parameters"):
@@ -245,6 +308,94 @@ def test_condition_comparison_reports_accuracy_drop_and_rejects_ambiguous_runs(t
         compare_runs([deep, other], "depth", tmp_path / "ids", conditions=["rotation"])
 
 
+def test_five_condition_tables_cover_depth_and_augmentation(tmp_path):
+    names = ("clean", "rotation", "zoom", "brightness", "lowres")
+    parameters = {
+        "clean": {},
+        "rotation": {"degrees": 10},
+        "zoom": {"factor": 0.1},
+        "brightness": {"delta": 0.1},
+        "lowres": {"image_size": 24},
+    }
+    accuracies = {
+        "clean": 0.80,
+        "rotation": 0.70,
+        "zoom": 0.66,
+        "brightness": 0.74,
+        "lowres": 0.60,
+    }
+    shallow = _comparison_run(tmp_path, "depth2", [4, 8], 100)
+    middle = _comparison_run(tmp_path, "depth3", [4, 8, 16], 180)
+    deep = _comparison_run(tmp_path, "depth4", [4, 8, 8, 8], 240)
+    for run_dir, offset in ((shallow, 0.0), (middle, 0.05), (deep, 0.10)):
+        for name in names:
+            _evaluation(run_dir, name, parameters[name], accuracies[name] + offset, "same-images")
+    depth = compare_runs(
+        [shallow, middle, deep],
+        "depth",
+        tmp_path / "depth",
+        conditions=list(names),
+    )
+    depth_text = depth["latex"].read_text(encoding="utf-8")
+    assert r"\begin{tabular*}{\textwidth}" in depth_text
+    header = next(line for line in depth_text.splitlines() if line.startswith("CNN depth"))
+    assert header.startswith("CNN depth & Clean & Rotation & Zoom & Brightness & Low-res")
+    assert "Parameters" not in header
+    assert "Selected checkpoint epoch" not in depth_text
+    depth_csv = list(csv.DictReader(depth["csv"].open(encoding="utf-8")))
+    zoom_row = next(row for row in depth_csv if row["run_id"] == "depth2" and row["condition"] == "zoom")
+    assert zoom_row["condition_accuracy"] == "0.660000"
+    assert zoom_row["condition_macro_f1"] == "0.560000"
+    assert zoom_row["condition_loss"] == "1.200000"
+    assert zoom_row["checkpoint_epoch"] == "1"
+    assert zoom_row["trainable_parameters"] == "100"
+    assert depth["png"].read_bytes().startswith(b"\x89PNG")
+
+    baseline = _comparison_run(tmp_path, "baseline", [4, 8], 100)
+    rotation = _comparison_run(
+        tmp_path,
+        "rotation10",
+        [4, 8],
+        100,
+        augmentation={"rotation_degrees": 10, "brightness": 0, "zoom": 0},
+    )
+    for run_dir in (baseline, rotation):
+        for name in names:
+            _evaluation(run_dir, name, parameters[name], accuracies[name], "same-images")
+    augmentation = compare_runs(
+        [baseline, rotation],
+        "augmentation",
+        tmp_path / "augmentation",
+        conditions=list(names),
+    )
+    text = augmentation["latex"].read_text(encoding="utf-8")
+    assert "Training augmentation" in text
+    assert "None (baseline)" in text
+    assert "Rotation only" in text
+    assert "Parameters" not in text.split("Training augmentation", 1)[1].split(r"\midrule", 1)[0]
+    for header in ("Clean", "Rotation", "Zoom", "Brightness", "Low-res"):
+        assert header in text
+    assert augmentation["output_dir"].parent.name == "augmentation"
+    rows = list(csv.DictReader(augmentation["csv"].open(encoding="utf-8")))
+    assert {row["configuration"] for row in rows} == {"None (baseline)", "Rotation only"}
+    assert all(row["checkpoint_epoch"] == "1" for row in rows)
+    assert all(row["condition_macro_f1"] for row in rows)
+    changed = _comparison_run(
+        tmp_path,
+        "other-depth",
+        [4, 8, 16],
+        180,
+        augmentation={"rotation_degrees": 10, "brightness": 0, "zoom": 0},
+    )
+    for name in names:
+        _evaluation(changed, name, parameters[name], 0.5, "same-images")
+    with pytest.raises(ReportError, match="architecture"):
+        compare_runs([baseline, changed], "augmentation", tmp_path / "bad-arch", conditions=["clean", "zoom"])
+    _evaluation(baseline, "zoom", {"factor": 0.2}, 0.4, "same-images", tag="other")
+    with pytest.raises(ReportError, match="different parameters"):
+        compare_runs([baseline, rotation], "augmentation", tmp_path / "bad-zoom", conditions=["zoom"])
+
+
 def test_local_evaluation_file_is_preferred_over_the_example(tmp_path):
     example = tmp_path / "evaluation.yaml.example"
     example.write_text("conditions:\n  clean:\n    type: none\n", encoding="utf-8")
@@ -252,6 +403,82 @@ def test_local_evaluation_file_is_preferred_over_the_example(tmp_path):
     local = tmp_path / "evaluation.yaml"
     local.write_text("conditions:\n  clean:\n    type: none\n", encoding="utf-8")
     assert default_conditions_path(tmp_path) == local
+
+
+def test_one_evaluation_scores_every_requested_condition(tmp_path, monkeypatch):
+    images = tmp_path / "images"
+    _save(images / "0_0.png", _pattern())
+    _save(images / "1_1.png", _pattern()[:, ::-1])
+    write_json(tmp_path / "splits" / "mini.json", _manifest())
+    run_dir = tmp_path / "artifacts" / "depth2"
+    run_dir.mkdir(parents=True)
+    write_yaml(run_dir / "config.yaml", _run_config(channels=[4, 8]))
+    write_json(run_dir / "metadata.json", {"run_id": "depth2", "experiment": "depth2"})
+    model = build_cnn(16, 2, [4, 8], kernel_size=3, dropout=0.0, dense_units=8, min_spatial=8)
+    model.save(run_dir / "model.keras")
+    config = tmp_path / "conditions.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "conditions:",
+                "  clean:",
+                "    type: none",
+                "  rotation:",
+                "    type: rotation",
+                "    degrees: 10",
+                "  zoom:",
+                "    type: zoom",
+                "    factor: 0.1",
+                "  brightness:",
+                "    type: brightness",
+                "    delta: 0.1",
+                "  lowres:",
+                "    type: downsample",
+                "    image_size: 8",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    loads = {"count": 0}
+    from tensorflow import keras
+
+    real_load = keras.models.load_model
+
+    def spy(path, *args, **kwargs):
+        loads["count"] += 1
+        return real_load(path, *args, **kwargs)
+
+    monkeypatch.setattr("traffic_signs.evaluation.evaluate.keras.models.load_model", spy)
+    names = ["clean", "rotation", "zoom", "brightness", "lowres"]
+    results = evaluate_conditions(
+        run_dir / "model.keras",
+        "validation",
+        names,
+        project_dir=tmp_path,
+        data_root=str(images),
+        conditions_path=config,
+    )
+    assert loads["count"] == 1
+    assert [item["metrics"]["condition"]["name"] for item in results] == names
+    assert len({item["results_path"] for item in results}) == 5
+    assert all(item["results_path"].is_file() for item in results)
+    assert results[0]["metrics"]["checkpoint"].endswith("model.keras")
+    with pytest.raises(ValueError, match="Unknown condition"):
+        evaluate_conditions(
+            run_dir / "model.keras",
+            "validation",
+            ["clean", "missing"],
+            project_dir=tmp_path,
+            data_root=str(images),
+            conditions_path=config,
+        )
+
+
+def test_condition_names_default_to_clean_and_reject_both_flags():
+    assert requested_condition_names(None, None) == ["clean"]
+    assert requested_condition_names(None, ["clean", "zoom", "clean"]) == ["clean", "zoom"]
+    with pytest.raises(ValueError, match="not both"):
+        requested_condition_names("rotation", ["clean"])
 
 
 def test_condition_fingerprint_changes_with_parameters():
@@ -328,11 +555,19 @@ def _run_config(channels):
     }
 
 
-def _comparison_run(root: Path, name: str, channels: list[int], parameters: int) -> Path:
+def _comparison_run(
+    root: Path,
+    name: str,
+    channels: list[int],
+    parameters: int,
+    augmentation: dict | None = None,
+) -> Path:
     run_dir = root / "runs" / name
     run_dir.mkdir(parents=True)
     config = _run_config(channels)
     config["experiment"] = name
+    if augmentation is not None:
+        config["augmentation"] = augmentation
     write_yaml(run_dir / "config.yaml", config)
     write_json(
         run_dir / "metadata.json",
@@ -354,8 +589,32 @@ def _comparison_run(root: Path, name: str, channels: list[int], parameters: int)
     return run_dir
 
 
+def _condition_label(name: str, parameters: dict) -> str:
+    if name == "clean":
+        return "Clean"
+    if "degrees" in parameters:
+        return f"Rotation: +{parameters['degrees']}°"
+    if "factor" in parameters:
+        return f"Zoom in: {1 + float(parameters['factor']):g}×"
+    if "delta" in parameters:
+        return f"Brightness: +{parameters['delta']}"
+    if "image_size" in parameters:
+        return f"Low resolution: {parameters['image_size']}"
+    return name
+
+
 def _evaluation(run_dir: Path, name: str, parameters: dict, accuracy: float, sample_hash: str, tag: str = "a") -> None:
-    condition_type = "none" if not parameters else "rotation"
+    condition_type = {
+        "degrees": "rotation",
+        "factor": "zoom",
+        "delta": "brightness",
+        "image_size": "downsample",
+    }
+    kind = "none"
+    for key, value in condition_type.items():
+        if key in parameters:
+            kind = value
+            break
     payload = {
         "split": "validation",
         "accuracy": accuracy,
@@ -368,9 +627,9 @@ def _evaluation(run_dir: Path, name: str, parameters: dict, accuracy: float, sam
         "created_at": "2026-11-08T00:00:00+00:00",
         "condition": {
             "name": name,
-            "type": condition_type,
+            "type": kind,
             "parameters": parameters,
-            "label": "Clean" if name == "clean" else f"Rotation: +{parameters['degrees']}°",
+            "label": _condition_label(name, parameters),
         },
     }
     directory = run_dir / "evaluations"

@@ -16,7 +16,7 @@ import tensorflow as tf
 import yaml
 
 CONDITION_NAME = re.compile(r"^[a-z][a-z-]*$")
-CONDITION_TYPES = ("none", "rotation", "brightness", "downsample")
+CONDITION_TYPES = ("none", "rotation", "zoom", "brightness", "downsample")
 
 
 class ConditionError(ValueError):
@@ -64,7 +64,8 @@ def normalize_condition(name, body) -> dict:
     if not isinstance(name, str) or CONDITION_NAME.fullmatch(name) is None:
         raise ConditionError(
             f"Condition name {name!r} must be lowercase words, without digits. "
-            "Put the rotation angle or brightness delta in the condition values."
+            "Put the rotation angle, zoom factor, brightness delta, or "
+            "low-resolution size in the condition values."
         )
     if not isinstance(body, dict):
         raise ConditionError(f"Condition {name!r} must be a mapping.")
@@ -91,6 +92,9 @@ def condition_label(condition: dict, image_size: int | None = None) -> str:
         return "Clean"
     if condition["type"] == "rotation":
         return f"Rotation: {parameters['degrees']:+g}°"
+    if condition["type"] == "zoom":
+        scale = 1.0 + float(parameters["factor"])
+        return f"Zoom in: {scale:g}×"
     if condition["type"] == "brightness":
         return f"Brightness: {parameters['delta']:+g}"
     low = int(parameters["image_size"])
@@ -107,6 +111,14 @@ def condition_notes(condition: dict) -> str:
         return (
             "Counterclockwise rotation of the preprocessed image. "
             "Bilinear sampling. Corners repeat the nearest border pixel."
+        )
+    if condition["type"] == "zoom":
+        return (
+            "Deterministic center zoom-in of the preprocessed image. "
+            "The scale is 1 + factor, so 0.1 enlarges the center to 1.1 times. "
+            "That center is bilinearly resized to the model input. "
+            "This is not the random training zoom, which draws a scale from "
+            "[1 - zoom, 1 + zoom]."
         )
     if condition["type"] == "brightness":
         return "Adds delta to normalized pixel intensities and clips to [0, 1]."
@@ -145,6 +157,8 @@ def apply_condition_batch(images: np.ndarray, condition: dict, image_size: int) 
         transformed = values
     elif condition_type == "rotation":
         transformed = _rotate(values, float(parameters["degrees"]))
+    elif condition_type == "zoom":
+        transformed = _zoom(values, float(parameters["factor"]))
     elif condition_type == "brightness":
         transformed = values + np.float32(parameters["delta"])
     elif condition_type == "downsample":
@@ -171,6 +185,8 @@ def _canonical_condition(condition: dict) -> dict:
 def _parameter_keys(condition_type: str) -> set[str]:
     if condition_type == "rotation":
         return {"degrees"}
+    if condition_type == "zoom":
+        return {"factor"}
     if condition_type == "brightness":
         return {"delta"}
     if condition_type == "downsample":
@@ -183,6 +199,8 @@ def _parameters(name: str, condition_type: str, body: dict) -> dict:
         return {}
     if condition_type == "rotation":
         return {"degrees": _number(body, "degrees", name, minimum=-180.0, maximum=180.0)}
+    if condition_type == "zoom":
+        return {"factor": _number(body, "factor", name, minimum=0.0, maximum=1.0)}
     if condition_type == "brightness":
         return {"delta": _number(body, "delta", name, minimum=-1.0, maximum=1.0)}
     image_size = body.get("image_size")
@@ -239,6 +257,31 @@ def _rotate(images: np.ndarray, degrees: float) -> np.ndarray:
         fill_mode="NEAREST",
     )
     return rotated.numpy().astype(np.float32)
+
+
+def _zoom(images: np.ndarray, factor: float) -> np.ndarray:
+    """Zoom in by ``factor``. The scale is ``1 + factor``.
+
+    A factor of 0.1 keeps the center of the preprocessed image and enlarges
+    it to 1.1 times the model input. The crop is bilinear. Nothing outside
+    the image is sampled, and the class label is left unchanged.
+    """
+    if factor == 0:
+        return images
+    scale = 1.0 + float(factor)
+    margin = (1.0 - 1.0 / scale) / 2.0
+    box = np.array([margin, margin, 1.0 - margin, 1.0 - margin], dtype=np.float32)
+    boxes = np.tile(box, (images.shape[0], 1))
+    indices = np.arange(images.shape[0], dtype=np.int32)
+    zoomed = tf.image.crop_and_resize(
+        tf.convert_to_tensor(images, dtype=tf.float32),
+        boxes=tf.convert_to_tensor(boxes),
+        box_indices=tf.convert_to_tensor(indices),
+        crop_size=[int(images.shape[1]), int(images.shape[2])],
+        method="bilinear",
+        extrapolation_value=0.0,
+    )
+    return zoomed.numpy().astype(np.float32)
 
 
 def _downsample(images: np.ndarray, low_size: int, image_size: int) -> np.ndarray:

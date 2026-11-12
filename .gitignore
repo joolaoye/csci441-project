@@ -1,7 +1,6 @@
 # LaTeX build output. This ignores compiled paper PDFs in reports/ itself.
 # Selected copies in reports/tables/ and reports/figures/ can be committed.
 # Generated comparisons stay under artifacts/comparisons/.
-/build/
 reports/*.pdf
 *.aux
 *.bbl
@@ -26,14 +25,6 @@ dist/
 /data/
 /artifacts/
 /logs/
-
-# Local copies at the repository root. The examples stay committed.
-# A run still stores its resolved settings as artifacts/<experiment>/config.yaml.
-/evaluation.yaml
-/config.yaml
-/training.yaml
-/shared/*
-!/shared/README.md
 
 # Generated model files
 *.keras

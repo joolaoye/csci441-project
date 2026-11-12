@@ -26,11 +26,13 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         epilog=(
             "example:\n"
             "  uv run python scripts/train.py \\\n"
-            "    --config training.yaml \\\n"
+            "    --config baseline.yaml \\\n"
             "    --data-root /path/to/gtsrb\n\n"
-            "Copy training.yaml.example to training.yaml and set experiment to the folder name, "
-            "such as depth2 or rotation10. --data-root is required and is "
-            "recorded in the run configuration."
+            "baseline.yaml is the shared baseline. For another run, copy it, "
+            "set experiment to the folder name, such as depth3 or rotation10, "
+            "and change only the setting under study. training.yaml.example "
+            "is for experiments outside that baseline. --data-root is required "
+            "and is recorded in the run configuration."
         ),
         formatter_class=HelpFormatter,
     )

@@ -1,6 +1,6 @@
 # Shared runs
 
-Drop a finished experiment here when you want someone else to report or compare it. This folder is not committed.
+Drop a finished experiment here. Commit the folder with the run.
 
 Copy the run directory from the machine that trained it:
 
@@ -15,7 +15,7 @@ shared/<experiment>/
 └── evaluations/    # needed for condition comparisons
 ```
 
-`artifacts/<experiment>/` is that directory. Send the whole folder. The other person puts it in their own `shared/` and uses that path in place of `artifacts/<experiment>`:
+`artifacts/<experiment>/` is that directory. Commit the copy under `shared/`. A teammate uses that path in place of `artifacts/<experiment>`:
 
 ```bash
 uv run python scripts/report.py run \

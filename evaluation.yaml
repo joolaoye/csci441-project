@@ -1,0 +1,21 @@
+# Shared evaluation conditions for the project.
+# evaluation.yaml.example is available when someone wants to try other values.
+conditions:
+  clean:
+    type: none
+
+  rotation:
+    type: rotation
+    degrees: 10
+
+  zoom:
+    type: zoom
+    factor: 0.1
+
+  brightness:
+    type: brightness
+    delta: 0.1
+
+  lowres:
+    type: downsample
+    image_size: 24

@@ -1,4 +1,5 @@
-# Copy this file to training.yaml and edit the copy. Pass that copy to scripts/train.py.
+# Experimental training configuration. The shared baseline is baseline.yaml.
+# Copy this file and pass the copy to scripts/train.py when trying other settings.
 # This example does not choose a dataset directory. Pass --data-root at training time.
 # experiment is the artifact folder name, for example depth2, depth3, or rotation10.
 # Training the same experiment again replaces artifacts/<experiment>.
@@ -20,14 +21,14 @@ data:
   num_classes: 43
 
 model:
-  channels: [32, 64]
+  channels: [64, 64]
   kernel_size: 3
   dropout: 0.2
   dense_units: 128
   min_spatial: 12
 
 training:
-  epochs: 20
+  epochs: 42
   batch_size: 64
   learning_rate: 0.001
   optimizer: adam

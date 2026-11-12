@@ -37,6 +37,22 @@ logger = logging.getLogger(__name__)
 EVALUATION_SPLITS = ("validation", "test")
 
 
+def requested_condition_names(condition: str | None, conditions: list[str] | None) -> list[str]:
+    """Return the conditions to score, preserving the order they were given.
+
+    ``--conditions`` scores several transforms in one command. A repeated name
+    is scored once. ``--condition`` remains the single-condition form and
+    defaults to clean when neither flag is set.
+    """
+    if conditions and condition:
+        raise ValueError("Pass --condition or --conditions, not both.")
+    chosen = list(conditions) if conditions else [condition or "clean"]
+    names = list(dict.fromkeys(chosen))
+    if not names or any(not isinstance(name, str) or not name for name in names):
+        raise ValueError("Pass at least one evaluation condition.")
+    return names
+
+
 def evaluate_checkpoint(
     checkpoint: Path,
     split: str,
@@ -53,19 +69,48 @@ def evaluate_checkpoint(
     a condition name but use different parameters. The dataset TEST partition is
     available for the final report; the log warns when it is used.
     """
+    results = evaluate_conditions(
+        checkpoint,
+        split,
+        conditions=[condition],
+        project_dir=project_dir,
+        data_root=data_root,
+        conditions_path=conditions_path,
+    )
+    return results[0]
+
+
+def evaluate_conditions(
+    checkpoint: Path,
+    split: str,
+    conditions: list[str],
+    *,
+    project_dir: Path | None = None,
+    data_root: str | None = None,
+    conditions_path: Path | None = None,
+) -> list[dict]:
+    """Score one checkpoint on each named condition and write one file per condition.
+
+    The checkpoint is loaded once. Every condition uses that same checkpoint,
+    the same split, and the same image ids. Altered conditions do not choose
+    a new checkpoint.
+    """
     if split not in EVALUATION_SPLITS:
         raise ValueError(
             "split must be 'validation' or 'test'. "
             "The training partition is not an evaluation split."
         )
+    if not conditions:
+        raise ValueError("Pass at least one evaluation condition.")
+    names = requested_condition_names(None, conditions)
     project_dir = Path(project_dir or Path.cwd())
     checkpoint = Path(checkpoint)
     if checkpoint.suffix != ".keras":
         raise ValueError(f"The checkpoint must be a .keras file. Got {checkpoint.name}.")
+    resolved_conditions = [_resolve_condition(name, conditions_path) for name in names]
     run_dir, config, metadata = load_run(checkpoint)
     if data_root is not None:
         override_data_root(config, data_root)
-    resolved = _resolve_condition(condition, conditions_path)
     stamp = utc_stamp()
     log_path = configure_logging("evaluate", f"{stamp}_{split}", project_dir)
     started = utc_now()
@@ -95,21 +140,13 @@ def evaluate_checkpoint(
         if not samples:
             raise DatasetError(f"The {split} split in {manifest_path} is empty.")
         image_size = int(config["data"]["image_size"])
-        sample_ids = [sample["id"] for sample in samples]
-        fingerprint = condition_fingerprint(
-            resolved,
-            image_size=image_size,
-            split=split,
-            split_manifest_sha256=current_hash,
-            sample_ids_sha256=_sample_ids_sha256(sample_ids),
-        )
-        data_root = resolve_path(config["data"]["root"], project_dir)
-        ensure_files_exist(data_root, samples)
+        sample_hash = _sample_ids_sha256([sample["id"] for sample in samples])
+        resolved_root = resolve_path(config["data"]["root"], project_dir)
+        ensure_files_exist(resolved_root, samples)
         versions = framework_versions()
         logger.info("source_run_id=%s experiment=%s", metadata.get("run_id"), metadata.get("experiment"))
         logger.info("checkpoint=%s", checkpoint)
-        logger.info("split=%s images=%d condition=%s", split, len(samples), condition_label(resolved, image_size))
-        logger.info("condition_parameters=%s", resolved["parameters"])
+        logger.info("split=%s images=%d conditions=%s", split, len(samples), ", ".join(names))
         logger.info("started_at=%s", started)
         logger.info(
             "tensorflow=%s keras=%s",
@@ -118,61 +155,82 @@ def evaluate_checkpoint(
         )
         logger.info("split_manifest=%s sha256=%s", manifest_path, current_hash)
         logger.info("training_seed=%s split_seed=%s", config["seed"], manifest.get("seed"))
-        results = score_split(
-            checkpoint,
-            samples,
-            data_root=data_root,
-            image_size=image_size,
-            num_classes=config["data"]["num_classes"],
-            batch_size=config["training"]["batch_size"],
-            condition=resolved,
-        )
-        probabilities = results.pop("probabilities")
-        payload = {
-            "source": "evaluation",
-            "created_at": started,
-            "run_id": metadata.get("run_id"),
-            "experiment": metadata.get("experiment"),
-            "checkpoint": relative_to_project(checkpoint, project_dir),
-            "split": split,
-            "split_manifest": config["data"]["split_manifest"],
-            "split_manifest_sha256": current_hash,
-            "training_split_manifest_sha256": trained_hash,
-            "sample_ids_sha256": _sample_ids_sha256(sample_ids),
-            "image_size": image_size,
-            "condition": {
-                **resolved,
-                "label": condition_label(resolved, image_size),
-                "notes": condition_notes(resolved),
-                "fingerprint": fingerprint,
-            },
-            **results,
-        }
-        output_dir = run_dir / "evaluations"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        stem = f"{stamp}_{split}_{resolved['name']}_{fingerprint}"
-        output_path = _unique_path(output_dir, stem, ".json")
-        payload["evaluation_id"] = output_path.stem
-        write_json(output_path, payload)
-        write_predictions_csv(
-            output_dir / f"{output_path.stem}_predictions.csv",
-            samples,
-            probabilities,
-        )
-        logger.info(
-            "accuracy=%.4f macro_f1=%.4f loss=%.4f samples=%d",
-            payload["accuracy"],
-            payload["macro_f1"],
-            payload["loss"],
-            payload["num_samples"],
-        )
-        logger.info("wrote %s", output_path)
-        return {
-            "results_path": output_path,
-            "log_path": log_path,
-            "metrics": payload,
-            "run_id": metadata.get("run_id"),
-        }
+        model = keras.models.load_model(checkpoint)
+        _check_model_shapes(model, image_size, config["data"]["num_classes"])
+        written = []
+        for resolved in resolved_conditions:
+            fingerprint = condition_fingerprint(
+                resolved,
+                image_size=image_size,
+                split=split,
+                split_manifest_sha256=current_hash,
+                sample_ids_sha256=sample_hash,
+            )
+            logger.info(
+                "condition=%s parameters=%s",
+                condition_label(resolved, image_size),
+                resolved["parameters"],
+            )
+            results = score_split(
+                checkpoint,
+                samples,
+                data_root=resolved_root,
+                image_size=image_size,
+                num_classes=config["data"]["num_classes"],
+                batch_size=config["training"]["batch_size"],
+                condition=resolved,
+                model=model,
+            )
+            probabilities = results.pop("probabilities")
+            payload = {
+                "source": "evaluation",
+                "created_at": started,
+                "run_id": metadata.get("run_id"),
+                "experiment": metadata.get("experiment"),
+                "checkpoint": relative_to_project(checkpoint, project_dir),
+                "split": split,
+                "split_manifest": config["data"]["split_manifest"],
+                "split_manifest_sha256": current_hash,
+                "training_split_manifest_sha256": trained_hash,
+                "sample_ids_sha256": sample_hash,
+                "image_size": image_size,
+                "condition": {
+                    **resolved,
+                    "label": condition_label(resolved, image_size),
+                    "notes": condition_notes(resolved),
+                    "fingerprint": fingerprint,
+                },
+                **results,
+            }
+            output_dir = run_dir / "evaluations"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            stem = f"{stamp}_{split}_{resolved['name']}_{fingerprint}"
+            output_path = _unique_path(output_dir, stem, ".json")
+            payload["evaluation_id"] = output_path.stem
+            write_json(output_path, payload)
+            write_predictions_csv(
+                output_dir / f"{output_path.stem}_predictions.csv",
+                samples,
+                probabilities,
+            )
+            logger.info(
+                "condition=%s accuracy=%.4f macro_f1=%.4f loss=%.4f samples=%d",
+                resolved["name"],
+                payload["accuracy"],
+                payload["macro_f1"],
+                payload["loss"],
+                payload["num_samples"],
+            )
+            logger.info("wrote %s", output_path)
+            written.append(
+                {
+                    "results_path": output_path,
+                    "log_path": log_path,
+                    "metrics": payload,
+                    "run_id": metadata.get("run_id"),
+                }
+            )
+        return written
     except Exception:
         logger.exception("Evaluation failed")
         raise
@@ -187,10 +245,16 @@ def score_split(
     num_classes: int,
     batch_size: int,
     condition: dict | None = None,
+    model: keras.Model | None = None,
 ) -> dict:
-    """Load a checkpoint and score it. This does not write training artifacts."""
-    model = keras.models.load_model(checkpoint)
-    _check_model_shapes(model, image_size, num_classes)
+    """Load a checkpoint and score it. This does not write training artifacts.
+
+    Pass ``model`` to reuse a checkpoint that has already been loaded. The
+    condition changes the images, not which checkpoint is scored.
+    """
+    if model is None:
+        model = keras.models.load_model(checkpoint)
+        _check_model_shapes(model, image_size, num_classes)
     sequence = make_sequence(
         samples,
         root=data_root,

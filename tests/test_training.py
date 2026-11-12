@@ -39,6 +39,8 @@ def test_smoke_training_writes_checkpoint_metrics_and_can_be_evaluated(tmp_path)
     assert metadata["split_seed"] == 7
     assert metadata["split_manifest_sha256"] == file_sha256(manifest_path)
     assert metadata["checkpoint_epoch"] == 1
+    assert 0.0 <= metadata["best_val_accuracy"] <= 1.0
+    assert metadata["best_val_loss"] is not None
     assert metadata["trainable_parameters"] > 0
     assert metadata["duration_seconds"] >= 0
     assert metadata["device_selected"] in {"cpu", "gpu"}

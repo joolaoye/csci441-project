@@ -1,4 +1,4 @@
-# Copy this file to evaluation.yaml and edit the copy.
+# Experimental copy of the evaluation conditions. The project uses evaluation.yaml.
 # Evaluation and condition previews use evaluation.yaml when it exists,
 # and this example otherwise.
 #
@@ -10,6 +10,11 @@
 # rotation turns the preprocessed image counterclockwise by degrees. Sampling
 # is bilinear. Empty corners repeat the nearest border pixel.
 # brightness adds delta to normalized intensities and clips the result to [0, 1].
+# zoom is a deterministic center zoom-in of the preprocessed image.
+# factor 0.1 means the scale is 1.1: the center is kept and bilinearly resized
+# back to the model input. This is not the random training zoom, which draws
+# a scale from [1 - zoom, 1 + zoom]. factor 0 leaves the image unchanged.
+# The allowed range is 0 to 1.
 # lowres bilinearly downsamples the preprocessed image to image_size, with
 # antialiasing, then bilinearly resizes it back to the model input.
 conditions:
@@ -19,6 +24,10 @@ conditions:
   rotation:
     type: rotation
     degrees: 10
+
+  zoom:
+    type: zoom
+    factor: 0.1
 
   brightness:
     type: brightness

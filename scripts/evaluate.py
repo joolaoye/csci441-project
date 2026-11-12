@@ -24,16 +24,22 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
             "test split. This does not modify the training metrics.json."
         ),
         epilog=(
-            "example:\n"
+            "examples:\n"
+            "  uv run python scripts/evaluate.py \\\n"
+            "    --checkpoint artifacts/<experiment>/model.keras \\\n"
+            "    --split validation \\\n"
+            "    --conditions clean rotation zoom brightness lowres \\\n"
+            "    --data-root /path/to/gtsrb\n\n"
             "  uv run python scripts/evaluate.py \\\n"
             "    --checkpoint artifacts/<experiment>/model.keras \\\n"
             "    --split validation \\\n"
             "    --condition rotation \\\n"
             "    --data-root /path/to/gtsrb\n\n"
             "--data-root is required. Do not rely on the path stored by whoever trained the run.\n"
-            "--condition defaults to clean. Parameters come from evaluation.yaml\n"
-            "when that file exists, otherwise from evaluation.yaml.example.\n"
-            "Each evaluation writes a new file and does not train the model.\n\n"
+            "--conditions scores every named condition in one run and loads the checkpoint once.\n"
+            "--condition scores one condition and defaults to clean. Parameters come from\n"
+            "evaluation.yaml when that file exists, otherwise from evaluation.yaml.example.\n"
+            "Each condition writes a new file and does not train the model.\n\n"
             "Use the validation split while comparing experiments. "
             "Reserve --split test for the final report."
         ),
@@ -53,8 +59,15 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--condition",
-        default="clean",
-        help="Condition name from the evaluation YAML. Defaults to clean.",
+        help="One condition name from the evaluation YAML. Defaults to clean.",
+    )
+    parser.add_argument(
+        "--conditions",
+        nargs="+",
+        help=(
+            "Score each of these conditions in one run. "
+            "Example: clean rotation zoom brightness lowres."
+        ),
     )
     parser.add_argument(
         "--conditions-config",
@@ -71,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         from traffic_signs.evaluation.conditions import default_conditions_path
-        from traffic_signs.evaluation.evaluate import evaluate_checkpoint
+        from traffic_signs.evaluation.evaluate import evaluate_conditions, requested_condition_names
     except Exception as exc:
         print(f"error: could not import TensorFlow evaluation code: {exc}", file=sys.stderr)
         return 1
@@ -86,25 +99,27 @@ def main(argv: list[str] | None = None) -> int:
                 conditions_path = ROOT / conditions_path
         else:
             conditions_path = default_conditions_path(ROOT)
-        result = evaluate_checkpoint(
+        names = requested_condition_names(args.condition, args.conditions)
+        results = evaluate_conditions(
             checkpoint,
             args.split,
+            names,
             project_dir=ROOT,
             data_root=args.data_root,
-            condition=args.condition,
             conditions_path=conditions_path,
         )
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    metrics = result["metrics"]
-    print(f"run: {result['run_id']}")
-    print(f"split: {args.split}")
-    print(f"condition: {metrics['condition']['label']}")
-    print(f"accuracy: {metrics['accuracy']:.4f}")
-    print(f"macro_f1: {metrics['macro_f1']:.4f}")
-    print(f"results: {result['results_path']}")
-    print(f"log: {result['log_path']}")
+    for result in results:
+        metrics = result["metrics"]
+        print(f"run: {result['run_id']}")
+        print(f"split: {args.split}")
+        print(f"condition: {metrics['condition']['label']}")
+        print(f"accuracy: {metrics['accuracy']:.4f}")
+        print(f"macro_f1: {metrics['macro_f1']:.4f}")
+        print(f"results: {result['results_path']}")
+    print(f"log: {results[-1]['log_path']}")
     return 0
 
 
