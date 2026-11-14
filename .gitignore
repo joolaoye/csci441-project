@@ -33,3 +33,6 @@ dist/
 
 # OS and editor files
 .DS_Store
+
+# Selected model checkpoints shared by team members
+!/shared/**/*.keras
