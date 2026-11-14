@@ -1,0 +1,26 @@
+experiment: depth3
+seed: 42
+device: auto
+data:
+  split_manifest: configs/splits/gtsrb_v1.json
+  image_size: 48
+  num_classes: 43
+  root: /Users/jon/.cache/kagglehub/datasets/meowmeowmeowmeowmeow/gtsrb-german-traffic-sign/versions/1
+model:
+  channels:
+  - 64
+  - 64
+  - 64
+  kernel_size: 3
+  dropout: 0.2
+  dense_units: 128
+  min_spatial: 12
+training:
+  epochs: 42
+  batch_size: 64
+  learning_rate: 0.001
+  optimizer: adam
+augmentation:
+  rotation_degrees: 0.0
+  brightness: 0.0
+  zoom: 0.0
