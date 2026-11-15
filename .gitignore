@@ -1,7 +1,7 @@
 # LaTeX build output. This ignores compiled paper PDFs in reports/ itself.
 # Selected copies in reports/tables/ and reports/figures/ can be committed.
 # Generated comparisons stay under artifacts/comparisons/.
-reports/*.pdf
+/reports/**/*.pdf
 *.aux
 *.bbl
 *.blg
