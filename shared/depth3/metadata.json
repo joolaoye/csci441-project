@@ -1,0 +1,53 @@
+{
+  "run_id": "depth3",
+  "experiment": "depth3",
+  "status": "completed",
+  "started_at": "2026-11-14T00:48:19+00:00",
+  "finished_at": "2026-11-14T02:00:06+00:00",
+  "duration_seconds": 4306.928,
+  "seed": 42,
+  "split_seed": 42,
+  "python_version": "3.12.0",
+  "tensorflow_version": "2.21.0",
+  "keras_version": "3.15.1",
+  "numpy_version": "2.5.4",
+  "pillow_version": "13.0.0",
+  "device_requested": "auto",
+  "device_selected": "cpu",
+  "device_name": "/physical_device:CPU:0",
+  "gpu_devices": [],
+  "git_commit": "dccafae57b5e705dae30af5faad1ef5bdf3c6d55",
+  "git_dirty": false,
+  "split_manifest": "configs/splits/gtsrb_v1.json",
+  "split_manifest_sha256": "e32ea0680262e73b1c733bc90b7c90c5c343d71dd038adaff9aaec6880fe98d7",
+  "split_counts": {
+    "train": 31380,
+    "validation": 7829,
+    "test": 12630
+  },
+  "architecture": {
+    "conv_layers": 3,
+    "channels": [
+      64,
+      64,
+      64
+    ],
+    "pooling_schedule": [
+      0,
+      1,
+      1
+    ],
+    "final_spatial_size": 12,
+    "head": "global_average_pooling"
+  },
+  "trainable_parameters": 89707,
+  "total_parameters": 90091,
+  "checkpoint_epoch": 40,
+  "best_val_accuracy": 0.9259164929389954,
+  "best_val_loss": 0.2867624759674072,
+  "validation_accuracy": 0.9259164644271299,
+  "validation_macro_f1": 0.8881942045261109,
+  "checkpoint": "artifacts/depth3/model.keras",
+  "log": "logs/train/depth3.log",
+  "error": null
+}
