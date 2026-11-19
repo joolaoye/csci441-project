@@ -1,0 +1,29 @@
+# RQ1 combined: shared baseline.yaml with rotation, brightness, and zoom together.
+# Values follow the experiment design: rotation ±10°, brightness ±0.1, zoom 0.9×–1.1×.
+# Only `experiment` and the `augmentation` block differ from baseline.yaml.
+experiment: combined
+seed: 42
+device: auto
+
+data:
+  split_manifest: configs/splits/gtsrb_v1.json
+  image_size: 48
+  num_classes: 43
+
+model:
+  channels: [64, 64]
+  kernel_size: 3
+  dropout: 0.2
+  dense_units: 128
+  min_spatial: 12
+
+training:
+  epochs: 42
+  batch_size: 64
+  learning_rate: 0.001
+  optimizer: adam
+
+augmentation:
+  rotation_degrees: 10
+  brightness: 0.1
+  zoom: 0.1
